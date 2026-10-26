@@ -1,13 +1,13 @@
 {
-  "name": "helioslauncher",
-  "version": "2.2.1",
-  "productName": "Helios Launcher",
+  "name": "newzenlauncher",
+  "version": "0.0.5",
+  "productName": "Newzen Launcher",
   "description": "Modded Minecraft Launcher",
-  "author": "Daniel Scalzi (https://github.com/dscalzi/)",
+  "author": "Loipi (https://github.com/CME-ORGANISATION/)",
   "license": "UNLICENSED",
-  "homepage": "https://github.com/dscalzi/HeliosLauncher",
+  "homepage": "https://github.com/CME-ORGANISATION/NewzenLauncher",
   "bugs": {
-    "url": "https://github.com/dscalzi/HeliosLauncher/issues"
+    "url": "https://github.com/CME-ORGANISATION/NewzenLauncher/issues"
   },
   "private": true,
   "main": "index.js",
@@ -48,5 +48,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dscalzi/HeliosLauncher.git"
+  },
+  "allowScripts": {
+    "electron@39.8.10": true
   }
 }

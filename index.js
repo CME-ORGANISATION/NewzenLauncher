@@ -2,7 +2,7 @@ const remoteMain = require('@electron/remote/main')
 remoteMain.initialize()
 
 // Requirements
-const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, shell, screen } = require('electron')
 const autoUpdater                       = require('electron-updater').autoUpdater
 const ejse                              = require('ejs-electron')
 const fs                                = require('fs')
@@ -84,6 +84,78 @@ ipcMain.on('autoUpdateAction', (event, arg, data) => {
             break
     }
 })
+// Startup update check: runs while the loading screen is displayed.
+// If a newer version exists it is downloaded and installed silently, then the launcher restarts.
+let startupUpdateRunning = false
+function runStartupUpdateCheck(sender, allowPrerelease){
+    const send = (state, data) => {
+        if(!sender.isDestroyed()){
+            sender.send('startupUpdateStatus', state, data)
+        }
+    }
+
+    // Nothing to do in dev, and macOS can't self-update without a signed app.
+    if(isDev || process.platform === 'darwin'){
+        send('skip')
+        return
+    }
+    if(startupUpdateRunning){
+        return
+    }
+    startupUpdateRunning = true
+
+    autoUpdater.autoDownload = true
+    autoUpdater.allowPrerelease = !!allowPrerelease || semver.prerelease(app.getVersion()) != null
+
+    let finished = false
+    // If GitHub does not answer in time, don't block the user on the loading screen.
+    const checkTimeout = setTimeout(() => finish('timeout'), 15000)
+
+    const onAvailable = (info) => {
+        clearTimeout(checkTimeout)
+        send('available', info.version)
+    }
+    const onNotAvailable = () => finish('up-to-date')
+    const onProgress = (p) => send('downloading', Math.round(p.percent))
+    const onDownloaded = (info) => {
+        send('installing', info.version)
+        // Small delay so the user can read the message, then silent install + relaunch.
+        setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500)
+    }
+    const onError = (err) => {
+        console.error('Startup update check failed', err)
+        finish('error')
+    }
+
+    function cleanup(){
+        clearTimeout(checkTimeout)
+        autoUpdater.removeListener('update-available', onAvailable)
+        autoUpdater.removeListener('update-not-available', onNotAvailable)
+        autoUpdater.removeListener('download-progress', onProgress)
+        autoUpdater.removeListener('update-downloaded', onDownloaded)
+        autoUpdater.removeListener('error', onError)
+        startupUpdateRunning = false
+    }
+    function finish(state){
+        if(finished) return
+        finished = true
+        cleanup()
+        send(state)
+    }
+
+    autoUpdater.on('update-available', onAvailable)
+    autoUpdater.on('update-not-available', onNotAvailable)
+    autoUpdater.on('download-progress', onProgress)
+    autoUpdater.on('update-downloaded', onDownloaded)
+    autoUpdater.on('error', onError)
+
+    autoUpdater.checkForUpdates().catch(onError)
+}
+
+ipcMain.on('startupUpdateCheck', (event, allowPrerelease) => {
+    runStartupUpdateCheck(event.sender, allowPrerelease)
+})
+
 // Redirect distribution index event from preloader to renderer.
 ipcMain.on('distributionIndexDone', (event, res) => {
     event.sender.send('distributionIndexDone', res)
@@ -222,11 +294,26 @@ ipcMain.on(MSFT_OPCODE.OPEN_LOGOUT, (ipcEvent, uuid, isLastAccount) => {
 // be closed automatically when the JavaScript object is garbage collected.
 let win
 
+// Return to the regular launcher dimensions after the portrait startup loader.
+ipcMain.on('startupUiReady', (event) => {
+    if (win && event.sender === win.webContents) {
+        win.setSize(980, 552)
+        win.center()
+    }
+})
+
 function createWindow() {
 
+    // Start with a tall portrait window for the Newzen loading screen.
+    // Keep it inside the available display area so the footer stays accessible.
+    const loaderWidth = 440
+    const loaderHeight = 680
+
     win = new BrowserWindow({
-        width: 980,
-        height: 552,
+        width: loaderWidth,
+        height: loaderHeight,
+        minWidth: 440,
+        minHeight: 680,
         icon: getPlatformIcon('SealCircle'),
         frame: false,
         webPreferences: {
@@ -236,6 +323,7 @@ function createWindow() {
         },
         backgroundColor: '#171614'
     })
+    win.center()
     remoteMain.enable(win.webContents)
 
     const data = {

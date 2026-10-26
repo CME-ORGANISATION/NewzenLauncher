@@ -66,6 +66,7 @@ async function showMainUI(data){
 
     await prepareSettings(true)
     updateSelectedServer(data.getServerById(ConfigManager.getSelectedServer()))
+    renderNewzenServers(data)
     refreshServerStatus()
     setTimeout(() => {
         document.getElementById('frameBar').style.backgroundColor = 'rgba(0, 0, 0, 0.5)'
@@ -97,8 +98,9 @@ async function showMainUI(data){
         }
 
         setTimeout(() => {
+            // Restore the normal launcher dimensions only after the tall loader has faded out.
             $('#loadingContainer').fadeOut(500, () => {
-                $('#loadSpinnerImage').removeClass('rotating')
+                ipcRenderer.send('startupUiReady')
             })
         }, 250)
         
@@ -435,8 +437,75 @@ document.addEventListener('readystatechange', async () => {
 
 }, false)
 
+/**
+ * Check for a launcher update while the loading screen is displayed.
+ * Resolves when the launcher is up to date (or the check failed / timed out).
+ * If an update is found it is downloaded, installed and the launcher restarts,
+ * so in that case this promise intentionally never resolves.
+ */
+function checkLauncherUpdateOnStartup(){
+    return new Promise((resolve) => {
+        if(isDev){
+            return resolve()
+        }
+
+        const statusEl = document.getElementById('loadingStatus')
+        const barEl = document.getElementById('loadingProgress')
+        const barFillEl = document.getElementById('loadingProgressFill')
+        const setStatus = (txt) => { if(statusEl) statusEl.textContent = txt }
+
+        setStatus('Vérification de la version...')
+
+        // Safety net in case the main process never answers.
+        const safety = setTimeout(done, 20000)
+
+        function done(){
+            clearTimeout(safety)
+            ipcRenderer.removeListener('startupUpdateStatus', onStatus)
+            if(barEl) barEl.style.display = 'none'
+            setStatus('')
+            resolve()
+        }
+
+        function onStatus(event, state, data){
+            switch(state){
+                case 'available':
+                    clearTimeout(safety)
+                    setStatus(`Mise à jour ${data} trouvée...`)
+                    break
+                case 'downloading':
+                    if(barEl) barEl.style.display = 'block'
+                    if(barFillEl) barFillEl.style.width = `${data}%`
+                    setStatus(`Téléchargement de la mise à jour... ${data}%`)
+                    break
+                case 'installing':
+                    if(barFillEl) barFillEl.style.width = '100%'
+                    setStatus('Installation... le launcher va redémarrer')
+                    // Do not resolve: the app is about to quit and relaunch.
+                    break
+                case 'up-to-date':
+                    loggerAutoUpdater.info('Launcher is up to date.')
+                    done()
+                    break
+                case 'skip':
+                case 'timeout':
+                case 'error':
+                    loggerAutoUpdater.info('Startup update check ended with state:', state)
+                    done()
+                    break
+            }
+        }
+
+        ipcRenderer.on('startupUpdateStatus', onStatus)
+        ipcRenderer.send('startupUpdateCheck', ConfigManager.getAllowPrerelease())
+    })
+}
+
 // Actions that must be performed after the distribution index is downloaded.
 ipcRenderer.on('distributionIndexDone', async (event, res) => {
+    // Always verify the launcher version first, while the loading screen is visible.
+    await checkLauncherUpdateOnStartup()
+
     if(res) {
         const data = await DistroAPI.getDistribution()
         syncModConfigurations(data)

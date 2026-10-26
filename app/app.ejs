@@ -37,12 +37,24 @@
         <%- include('landing') %>
     </div>
     <%- include('overlay') %>
-    <div id="loadingContainer">
+    <div id="loadingContainer" aria-label="Chargement de Newzen Launcher">
         <div id="loadingContent">
-            <div id="loadSpinnerContainer">
-                <img id="loadCenterImage" src="assets/images/LoadingSeal.png">
-                <img id="loadSpinnerImage" class="rotating" src="assets/images/LoadingText.png">
+            <img
+                id="loadCenterImage"
+                src="assets/images/logobig.png"
+                alt="Newzen"
+                draggable="false"
+            >
+            <a
+                id="loadingHelpLink"
+                href="<%- lang('loading.connectionHelpURL') %>"
+                title="Obtenir de l’aide"
+            ><%- lang('loading.connectionHelpText') %></a>
+            <div id="loadingStatusBox">
+                <span id="loadingStatus"></span>
+                <div id="loadingProgress"><div id="loadingProgressFill"></div></div>
             </div>
+            <span id="loadingVersion" aria-label="Version du launcher">V...</span>
         </div>
     </div>
 </body>

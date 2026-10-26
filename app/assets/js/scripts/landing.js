@@ -168,6 +168,7 @@ function updateSelectedServer(serv){
         animateSettingsTabRefresh()
     }
     setLaunchEnabled(serv != null)
+    syncNewzenSelectedServer(serv)
 }
 // Real text is set in uibinder.js on distributionIndexDone.
 server_selection_button.innerHTML = '&#8226; ' + Lang.queryJS('landing.selectedServer.loading')
@@ -668,6 +669,9 @@ function slide_(up){
     const landingContainer = document.getElementById('landingContainer')
     const newsContainer = document.querySelector('#landingContainer > #newsContainer')
 
+    document.getElementById('newzenNewsCards')
+    ?.classList.toggle('is-hidden', up)
+
     newsGlideCount++
 
     if(up){
@@ -898,6 +902,7 @@ async function initNews(){
         document.getElementById('newsNavigateLeft').onclick = () => { switchHandler(false) }
         await $('#newsErrorContainer').fadeOut(250).promise()
         displayArticle(newsArr[0], 1)
+        renderNewzenNewsCards()
         await $('#newsContent').fadeIn(250).promise()
     }
 
@@ -966,7 +971,7 @@ async function loadNews(){
 
     const promise = new Promise((resolve, reject) => {
         
-        const newsFeed = distroData.rawDistribution.rss
+        const newsFeed = 'http://92.222.23.167:30123/news.xml'
         const newsHost = new URL(newsFeed).origin + '/'
         $.ajax({
             url: newsFeed,
@@ -997,6 +1002,17 @@ async function loadNews(){
                     let title  = el.find('title').text()
                     let author = el.find('dc\\:creator').text()
 
+                    // Resolve a thumbnail from standard RSS image fields first,
+                    // then from the first image embedded in content:encoded.
+                    const enclosureImage = el.find('enclosure').first().attr('url')
+                    const mediaContentImage = el.find('media\\:content').first().attr('url')
+                    const mediaThumbnailImage = el.find('media\\:thumbnail').first().attr('url')
+                    const embeddedImageMatch = content.match(/<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/i)
+                    const embeddedImage = embeddedImageMatch
+                        ? (embeddedImageMatch[1] || embeddedImageMatch[2])
+                        : null
+                    const image = enclosureImage || mediaContentImage || mediaThumbnailImage || embeddedImage || null
+
                     // Generate article.
                     articles.push(
                         {
@@ -1005,6 +1021,7 @@ async function loadNews(){
                             date,
                             author,
                             content,
+                            image,
                             comments,
                             commentsLink: link + '#comments'
                         }
@@ -1023,4 +1040,261 @@ async function loadNews(){
     })
 
     return await promise
+}
+
+/* =================================
+   NEWZEN SIDEBAR - SERVER SELECTION
+   ================================= */
+
+function syncNewzenSelectedServer(serv) {
+    const raw = serv?.rawServer
+    const serverId = raw ? String(raw.id) : ''
+
+    document.querySelectorAll('.newzen-server-item').forEach(button => {
+        button.classList.toggle(
+            'active',
+            button.dataset.serverId === serverId
+        )
+    })
+
+    const title = document.getElementById('newzenServerTitle')
+    const description = document.getElementById('newzenServerDescription')
+
+    if (title) {
+        title.textContent = raw?.name || 'Newzen'
+    }
+
+    if (description) {
+        description.textContent =
+            raw?.description || 'Prépare-toi à vivre ton aventure Minecraft.'
+    }
+}
+
+function renderNewzenServers(distribution) {
+    const list = document.getElementById('newzenServerList')
+    if (!list || !distribution?.servers) return
+
+    list.replaceChildren()
+
+    const slugIconName = value => String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+
+    const safeIconFilename = value => String(value || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9._-]/g, '')
+
+    const getServerIconCandidates = raw => {
+        const candidates = []
+        const remoteIcon = typeof raw.icon === 'string' ? raw.icon.trim() : ''
+
+        // A distribution.json icon URL is the preferred source, allowing icon
+        // changes to be published without rebuilding the launcher.
+        if (/^https?:\/\//i.test(remoteIcon) || /^assets\/images\//i.test(remoteIcon)) {
+            candidates.push(remoteIcon)
+        }
+
+        const idFilename = safeIconFilename(raw.id)
+        const nameFilename = safeIconFilename(raw.name)
+        const idSlug = slugIconName(raw.id)
+        const nameSlug = slugIconName(raw.name)
+
+        if (idFilename) candidates.push(`assets/images/servers/${idFilename}.png`)
+        if (idFilename) candidates.push(`assets/images/servers/${idFilename.toLowerCase()}.png`)
+        if (idSlug) candidates.push(`assets/images/servers/${idSlug}.png`)
+        if (nameFilename) candidates.push(`assets/images/servers/${nameFilename}.png`)
+        if (nameSlug) candidates.push(`assets/images/servers/${nameSlug}.png`)
+
+        // Final local fallback for Newzen, or for a server without a custom icon.
+        candidates.push('assets/images/servers/newzen.png')
+
+        return [...new Set(candidates)]
+    }
+
+    for (const server of distribution.servers) {
+        const raw = server.rawServer
+        if (!raw) continue
+
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'newzen-server-item'
+        button.dataset.serverId = String(raw.id)
+        button.title = raw.name || 'Serveur'
+        button.setAttribute('aria-label', raw.name || 'Serveur')
+
+        const logo = document.createElement('img')
+        logo.className = 'newzen-server-logo'
+        logo.alt = ''
+
+        const iconCandidates = getServerIconCandidates(raw)
+        let iconCandidateIndex = -1
+
+        const loadNextServerIcon = () => {
+            iconCandidateIndex += 1
+            if (iconCandidateIndex < iconCandidates.length) {
+                logo.src = iconCandidates[iconCandidateIndex]
+                return
+            }
+
+            logo.remove()
+            button.textContent = (raw.name || 'N').trim().charAt(0).toUpperCase()
+        }
+
+        logo.onerror = loadNextServerIcon
+        button.appendChild(logo)
+        loadNextServerIcon()
+
+        button.addEventListener('click', () => {
+            // Utilise la logique native de Helios pour changer de serveur.
+            updateSelectedServer(server)
+            refreshServerStatus(true).catch(err => {
+                console.warn('Impossible d’actualiser le statut du serveur.', err)
+            })
+        })
+
+        list.appendChild(button)
+    }
+
+    syncNewzenSelectedServer(
+        distribution.getServerById(ConfigManager.getSelectedServer())
+    )
+}
+
+/* Sidebar buttons: reuse the existing launcher functions. */
+
+document.getElementById('newzenNewsButton')?.addEventListener('click', () => {
+    document.getElementById('newsButton')?.click()
+})
+
+document.getElementById('newzenAccountButton')?.addEventListener('click', () => {
+    document.getElementById('avatarOverlay')?.click()
+})
+
+document.getElementById('newzenSettingsButton')?.addEventListener('click', () => {
+    document.getElementById('settingsMediaButton')?.click()
+})
+
+document.getElementById('newzenBrand')?.addEventListener('click', () => {
+    document.getElementById('image_seal_container')?.click()
+})
+
+document.getElementById('newzenDiscordButton')?.addEventListener('click', () => {
+    document.getElementById('discordURL')?.click()
+})
+
+// Images personnalisées des actualités Newzen.
+// Les images définies ici sont prioritaires pour garantir une miniature même
+// si certains lecteurs RSS ne décodent pas correctement content:encoded.
+const NEWZEN_NEWS_IMAGES = {
+    'ouverture officielle de newzen': 'http://92.222.23.167:30123/images/news.jpg',
+    'mise à jour du serveur': 'assets/images/news/update.jpg',
+    'nouvel événement': 'assets/images/news/evenement.jpg'
+}
+
+function normalizeNewzenNewsTitle(value) {
+    return String(value || '')
+        .normalize('NFC')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLocaleLowerCase('fr-FR')
+}
+
+function extractNewzenNewsImage(content) {
+    if (typeof content !== 'string' || !content.trim()) return null
+
+    try {
+        const parsed = new DOMParser().parseFromString(content, 'text/html')
+        const image = parsed.querySelector('img[src]')
+        return image ? image.getAttribute('src') : null
+    } catch (_) {
+        const match = content.match(/<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i)
+        return match ? (match[1] || match[2] || match[3] || null) : null
+    }
+}
+
+function getSafeNewzenNewsImageUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null
+    const trimmed = value.trim()
+
+    // Autoriser uniquement les chemins locaux prévus pour les images de news.
+    if (trimmed.startsWith('assets/images/news/') && !trimmed.includes('..')) {
+        return trimmed.replace(/[\"\\\r\n]/g, '')
+    }
+
+    try {
+        // Les chemins relatifs du flux sont résolus sur le serveur Newzen.
+        const parsed = new URL(trimmed, 'http://92.222.23.167:30123/news.xml')
+        const isHttps = parsed.protocol === 'https:'
+        const isNewzenHttp = parsed.protocol === 'http:' &&
+            parsed.hostname === '92.222.23.167' && parsed.port === '30123'
+
+        if (isHttps || isNewzenHttp) return parsed.href
+    } catch (_) {
+        return null
+    }
+
+    return null
+}
+
+function renderNewzenNewsCards() {
+    const container = document.getElementById('newzenNewsCards')
+    if (!container || !Array.isArray(newsArr)) return
+
+    container.replaceChildren()
+
+    newsArr.slice(0, 3).forEach((article, index) => {
+        const card = document.createElement('button')
+        card.type = 'button'
+        card.className = 'newzen-news-card'
+
+        const normalizedTitle = normalizeNewzenNewsTitle(article.title)
+        const mappedImage = NEWZEN_NEWS_IMAGES[normalizedTitle]
+        const rssImage = article.image || extractNewzenNewsImage(article.content)
+        // La correspondance par titre est volontairement prioritaire pour
+        // l'article d'ouverture Newzen, puis viennent les données RSS.
+        const rawImageUrl = mappedImage || rssImage
+        const safeUrl = getSafeNewzenNewsImageUrl(rawImageUrl)
+
+        if (safeUrl) {
+            const image = document.createElement('img')
+            image.className = 'newzen-news-card-image'
+            image.alt = ''
+            image.setAttribute('aria-hidden', 'true')
+            image.decoding = 'async'
+            image.loading = 'eager'
+            image.src = safeUrl
+
+            image.addEventListener('error', () => {
+                // Si l'image issue du RSS ne charge pas, essaie une fois la
+                // miniature officielle définie pour le titre de l'article.
+                const fallback = getSafeNewzenNewsImageUrl(mappedImage)
+                if (fallback && image.src !== fallback) {
+                    image.src = fallback
+                    return
+                }
+                image.remove()
+            })
+
+            card.appendChild(image)
+        }
+
+        const title = document.createElement('span')
+        title.className = 'newzen-news-card-title'
+        title.textContent = article.title || 'Actualité Newzen'
+
+        const date = document.createElement('span')
+        date.className = 'newzen-news-card-date'
+        date.textContent = article.date || ''
+
+        card.append(title, date)
+        card.addEventListener('click', () => {
+            if (!newsActive) {
+                document.getElementById('newsButton')?.click()
+            }
+            displayArticle(article, index + 1)
+        })
+
+        container.appendChild(card)
+    })
 }
